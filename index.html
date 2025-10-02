@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Snake.FS — Firebase Version</title>
+<style>
+body{margin:0;background:#000;color:#0f0;font-family:monospace;display:flex;flex-direction:column;align-items:center;min-height:100vh;}
+h1{margin:12px;font-size:clamp(18px,3.5vw,30px);}
+.panel{background:#111;border:2px solid #0f0;padding:12px;border-radius:8px;margin:8px;width:94%;max-width:720px;box-sizing:border-box;}
+button{padding:8px 12px;background:#080808;color:#0f0;border:1px solid #0f0;border-radius:6px;cursor:pointer;}
+button:hover{background:#0f0;color:#000;}
+canvas{background:#111;border:2px solid #0f0;display:block;margin:10px auto;max-width:95vw;height:auto;}
+.row{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:8px;}
+#controls{display:none;margin-top:8px;z-index:10;position:relative;}
+.ctrl{width:60px;height:60px;border-radius:8px;font-size:24px;background:#080808;color:#0f0;border:1px solid #0f0;touch-action: manipulation;user-select:none;}
+.ctrl:active{background:#0f0;color:#000;}
+@media(max-width:760px){.ctrl{width:15vw;height:15vw;font-size:6vw;}}
+table{width:100%;border-collapse:collapse;color:#0f0;}
+th,td{border:1px solid #0f0;padding:6px;text-align:center;}
+</style>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+</head>
+<body>
+<h1>Snake.FS — Firebase Version</h1>
+
+<!-- LOGIN PANEL -->
+<div id="loginPanel" class="panel">
+  <button id="btnLogin">Login with Google</button>
+</div>
+
+<!-- MENU -->
+<div id="menu" class="panel" style="display:none;">
+  <div id="welcome"></div>
+  <div class="row">
+    <label>Difficulty
+      <select id="difficulty">
+        <option>Beginner</option><option>Easy</option><option selected>Normal</option>
+        <option>Medium Hard</option><option>Hard</option><option>Very Hard</option>
+        <option>Extreme</option><option>Impossible</option><option>God</option>
+      </select>
+    </label>
+  </div>
+  <div class="row">
+    <button id="btnPlay">▶ Play</button>
+    <button id="btnResume">⏯ Resume</button>
+    <button id="btnLeaderboard">🏆 Leaderboard</button>
+  </div>
+</div>
+
+<!-- GAME PANEL -->
+<div id="gamePanel" class="panel" style="display:none;">
+  <div id="status">Score: <span id="score">0</span> | Time: <span id="time">0</span>s</div>
+  <canvas id="canvas" width="400" height="400"></canvas>
+  <div id="controls">
+    <div style="display:flex; justify-content:center; margin-bottom:4px;">
+      <button class="ctrl" data-dir="UP">⬆</button>
+    </div>
+    <div style="display:flex; justify-content:center; gap:8px;">
+      <button class="ctrl" data-dir="LEFT">⬅</button>
+      <button class="ctrl" data-dir="DOWN">⬇</button>
+      <button class="ctrl" data-dir="RIGHT">➡</button>
+    </div>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <button id="btnPause">Pause</button>
+    <button id="btnEnd">End</button>
+  </div>
+</div>
+
+<!-- LEADERBOARD -->
+<div id="leaderboardPanel" class="panel" style="display:none;">
+  <h3>Leaderboard (Top 10)</h3>
+  <table>
+    <thead><tr><th>#</th><th>Player</th><th>Diff</th><th>Score</th><th>Time</th><th>Actions</th></tr></thead>
+    <tbody id="leaderbody"></tbody>
+  </table>
+  <div class="row" style="margin-top:10px">
+    <button id="btnBack">⬅ Back</button>
+    <button id="btnResetAll" style="display:none;">🧹 Reset All (Admin)</button>
+  </div>
+</div>
+
+<script>
+// -------------------- FIREBASE CONFIG --------------------
+const firebaseConfig = {
+  apiKey: "AIzaSyAdmbA68NM9zae0YGDSjjppCyXRwOzDNa4",
+  authDomain: "snake-fs-ad69b.firebaseapp.com",
+  databaseURL: "https://snake-fs-ad69b-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "snake-fs-ad69b",
+  storageBucket: "snake-fs-ad69b.appspot.com",
+  messagingSenderId: "798703912923",
+  appId: "1:798703912923:web:b3f37a54051e1dbf7789fe"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.database();
+
+// -------------------- STATE --------------------
+let state={user:null,isAdmin:false,snake:[],dir:null,food:null,
+score:0,time:0,speed:140,difficulty:'Normal',
+paused:false,intervalId:null,timerId:null};
+let tileCount=20,tileSize=20;
+
+// -------------------- UI --------------------
+const loginPanel=document.getElementById('loginPanel');
+const menu=document.getElementById('menu');
+const gamePanel=document.getElementById('gamePanel');
+const leaderboardPanel=document.getElementById('leaderboardPanel');
+const canvas=document.getElementById('canvas');
+const ctx=canvas.getContext('2d');
+const controls=document.getElementById('controls');
+const leaderbody=document.getElementById('leaderbody');
+const welcome=document.getElementById('welcome');
+
+// -------------------- DIFFICULTY --------------------
+const difficultyConfig={
+'Beginner':{speed:250,timeBonus:120},
+'Easy':{speed:180,timeBonus:240},
+'Normal':{speed:140,timeBonus:360},
+'Medium Hard':{speed:120,timeBonus:480},
+'Hard':{speed:100,timeBonus:600},
+'Very Hard':{speed:70,timeBonus:720},
+'Extreme':{speed:50,timeBonus:840},
+'Impossible':{speed:30,timeBonus:960},
+'God':{speed:12,timeBonus:1080}
+};
+
+// -------------------- LOGIN --------------------
+document.getElementById('btnLogin').addEventListener('click',async()=>{
+  const provider=new firebase.auth.GoogleAuthProvider();
+  try{
+    const result=await auth.signInWithPopup(provider);
+    const user=result.user;
+    state.user=user;
+    const email=user.email;
+    state.isAdmin=(email==='sur.aul110424@gmail.com'||email==='syifa.aulialia03@gmail.com');
+    welcome.innerText=`Welcome, ${user.displayName}${state.isAdmin?' (Admin)':''}`;
+    loginPanel.style.display='none';
+    menu.style.display='block';
+    document.getElementById('btnResetAll').style.display=state.isAdmin?'inline-block':'none';
+    initLeaderboardRealtime();
+  }catch(e){alert('Login failed: '+e.message);console.error(e);}
+});
+
+// -------------------- PANEL NAV --------------------
+document.getElementById('btnPlay').addEventListener('click',()=>{state.difficulty=document.getElementById('difficulty').value; startGame();});
+document.getElementById('btnResume').addEventListener('click',resumeGame);
+document.getElementById('btnLeaderboard').addEventListener('click',()=>{renderLeaderboard();showPanel(leaderboardPanel);});
+document.getElementById('btnBack').addEventListener('click',()=>{showPanel(menu);});
+document.getElementById('btnPause').addEventListener('click',togglePause);
+document.getElementById('btnEnd').addEventListener('click',()=>{endGame();showPanel(leaderboardPanel);});
+document.getElementById('btnResetAll').addEventListener('click',()=>{
+  if(!state.isAdmin)return;if(confirm('Reset all leaderboard?')) db.ref('leaderboard').remove();
+});
+
+// -------------------- PANELS --------------------
+function showPanel(p){
+  loginPanel.style.display='none';
+  menu.style.display='none';
+  gamePanel.style.display='none';
+  leaderboardPanel.style.display='none';
+  p.style.display='block';
+}
+</script>
+</body>
+</html>
